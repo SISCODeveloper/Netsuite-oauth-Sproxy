@@ -1,70 +1,80 @@
 const express = require('express');
 const axios = require('axios');
-const OAuth = require('oauth-1.0a');
-const crypto = require('crypto');
 
 const app = express();
-app.use(express.json());
 
-// OAuth Setup (HMAC-SHA256)
-const oauth = OAuth({
-  consumer: {
-    key: process.env.CONSUMER_KEY,
-    secret: process.env.CONSUMER_SECRET
-  },
-  signature_method: 'HMAC-SHA256',
-  hash_function(base, key) {
-    return crypto.createHmac('sha256', key).update(base).digest('base64');
-  }
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// ✅ Hardcoded NetSuite Suitelet URL
+const TARGET_URL = 'https://8869626.extforms.netsuite.com/app/site/hosting/scriptlet.nl?script=2239&deploy=1&compid=8869626&ns-at=AAEJ7tMQWqfayGlovA_0cQpw0pkkSJj8L7hOYASVjnO86mffWDA';
+
+app.get('/', (req, res) => {
+  res.status(200).send('✅ New NetSuite Proxy is running');
 });
 
-const token = {
-  key: process.env.TOKEN,
-  secret: process.env.TOKEN_SECRET
-};
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Proxy is awake',
+    time: new Date().toISOString()
+  });
+});
 
-app.post('/netsuite', async (req, res) => {
+app.all('/test', (req, res) => {
+  console.log('🧪 TEST endpoint hit');
+  console.log('Method:', req.method);
+  console.log('Body:', req.body);
+
+  res.status(200).json({
+    success: true,
+    message: 'Render test endpoint reached',
+    method: req.method,
+    body: req.body
+  });
+});
+
+app.post('/clean', async (req, res) => {
+  console.log('🔥 /clean endpoint hit');
+  console.log('📥 Body received:', JSON.stringify(req.body, null, 2));
+
   try {
-    // Step 1: Filter or transform data (customize as needed)
-    const filteredData = {
-      client: req.body.client,
-      project: req.body.project,
-      amount: req.body.amount
-    };
-
-    // Step 2: Prepare OAuth header
-    const requestData = {
-      url: process.env.TARGET_URL,
-      method: 'POST',
-      data: filteredData
-    };
-
-    const oauthHeader = oauth.toHeader(oauth.authorize(requestData, token));
-
-    // Step 3: Send to NetSuite
     const response = await axios({
-      url: requestData.url,
+      url: TARGET_URL,
       method: 'POST',
-      data: filteredData,
+      data: req.body,
+      timeout: 30000,
       headers: {
-        ...oauthHeader,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0'
       }
     });
 
-    res.status(200).json(response.data);
-  } catch (err) {
-    console.error('Error:', err.message);
-    res.status(err.response?.status || 500).json({
-      error: err.message,
-      detail: err.response?.data || 'Request failed'
+    console.log('✅ NetSuite response:', response.data);
+
+    res.status(200).json({
+      success: true,
+      message: 'Successfully forwarded to NetSuite',
+      netsuiteResponse: response.data
+    });
+
+  } catch (error) {
+    console.error('❌ Error forwarding to NetSuite:', error.message);
+    console.error('❌ NetSuite status:', error.response?.status);
+    console.error('❌ NetSuite detail:', error.response?.data);
+
+    res.status(error.response?.status || 500).json({
+      success: false,
+      message: 'Render was hit, but NetSuite forwarding failed',
+      error: error.message,
+      netsuiteStatus: error.response?.status || null,
+      netsuiteDetail: error.response?.data || null
     });
   }
 });
 
-app.get('/', (req, res) => {
-  res.send('✅ NetSuite OAuth Proxy is running. POST to /netsuite');
-});
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+app.listen(PORT, () => {
+  console.log(`🚀 New proxy running on port ${PORT}`);
+});
